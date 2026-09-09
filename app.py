@@ -1,6 +1,8 @@
-from flask import Flask, request, redirect, session
+import os
 import sqlite3
 from datetime import datetime
+from flask import Flask, request, session, redirect, render_template, url_for, flash
+
 
 app = Flask(__name__)
 app.secret_key = "study_world_final_logo_2025"
