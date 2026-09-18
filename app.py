@@ -1,313 +1,243 @@
-import os
-import json
-from datetime import datetime
-from flask import Flask, send_from_directory, render_template_string, request, redirect, session
+from flask import Flask, request, session, redirect
+import sqlite3, os, random
+from datetime import timedelta
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-app.secret_key = 'study_world_hostel_secure_2026'
+app.secret_key = 'hostel123'
+app.permanent_session_lifetime = timedelta(days=30)
+app.config['UPLOAD_FOLDER'] = 'static/uploads'
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+DB='hostel.db'
 
-OUTPASS_FILE = 'outpass_requests.json'
-USERS_FILE = 'users.json'
-RESET_FILE = 'reset_requests.json'
+def top(s):
+    return f"""
+    <html><head><meta name='viewport' content='width=device-width, initial-scale=1'>
+    <style>button:active{{transform:scale(0.95)}}</style>
+    </head>
+    <body style='font-family:sans-serif; background:#e3f2fd; margin:0;'>
+    <div style='max-width:550px; margin:auto; background:#fff; padding:20px; border-radius:15px; margin-top:15px; box-shadow:0 4px 15px rgba(0,0,0,0.1);'>
+    <div style='display:flex; align-items:center; justify-content:space-between; margin-bottom:15px; border-bottom:2px solid #e3f2fd; padding-bottom:10px;'>
+        <a href='javascript:history.back()' style='text-decoration:none; background:#e3f2fd; color:#0D47A1; padding:8px 15px; border-radius:20px; font-weight:bold; border:1px solid #0D47A1;'>⬅️ Back</a>
+        <a href='/' style='text-decoration:none; background:#0D47A1; color:#fff; padding:8px 15px; border-radius:20px; font-weight:bold;'>🏠 Home</a>
+    </div>
+    <center><h2 style='color:#0D47A1; margin-top:0;'>STUDY WORLD HOSTEL</h2></center>
+    {s}
+    </div></body></html>
+    """
 
-DEFAULT_WARDENS = {
-    'warden1': {'password': 'Warden1@2024', 'year': '1st Year', 'mobile': '9876543210'},
-    'warden2': {'password': 'Warden2@2024', 'year': '2nd Year', 'mobile': '9876543211'},
-    'warden3': {'password': 'Warden3@2024', 'year': '3rd Year', 'mobile': '9876543212'},
-    'wardenfinal': {'password': 'Final@2024', 'year': 'Final Year', 'mobile': '9876543213'}
-}
-
-def load_json(file):
-    if not os.path.exists(file):
-        return []
-    try:
-        with open(file, 'r') as f:
-            return json.load(f)
-    except:
-        return []
-
-def save_json(file, data):
-    with open(file, 'w') as f:
-        json.dump(data, f, indent=2)
-
-def load_users():
-    users = load_json(USERS_FILE)
-    if not users:
-        default_list = []
-        i = 1
-        for uname, info in DEFAULT_WARDENS.items():
-            default_list.append({'id': i, 'username': uname, 'password': info['password'], 'role': 'warden', 'year': info['year'], 'mobile': info['mobile'], 'status': 'Active'})
-            i += 1
-        default_list.append({'id': i, 'username': 'admin', 'password': 'Admin@2024', 'role': 'admin', 'year': 'All', 'mobile': '9999999999', 'status': 'Active'})
-        i += 1
-        default_list.append({'id': i, 'username': 'gate', 'password': 'Gate@2024', 'role': 'gate', 'year': 'All', 'mobile': '8888888888', 'status': 'Active'})
-        save_json(USERS_FILE, default_list)
-        return default_list
-    return users
-
-@app.route('/logo.png')
-def logo():
-    return send_from_directory('.', 'logo.png')
-
-BASE = """
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-body{font-family:Arial;margin:0;background:#f4f6f9;}
-.header{background:#1e3a8a;color:white;padding:18px;text-align:center;}
-.logo{width:75px;height:75px;border-radius:50%;background:white;padding:4px;}
-.container{max-width:1100px;margin:18px auto;padding:12px;}
-.card{background:white;padding:20px;border-radius:12px;margin-bottom:18px;box-shadow:0 2px 6px rgba(0,0,0,0.05);overflow-x:auto;}
-.btn{background:#1e3a8a;color:white;padding:9px 16px;border:none;border-radius:6px;text-decoration:none;display:inline-block;margin:3px;cursor:pointer;}
-.btn-green{background:#16a34a;} .btn-red{background:#dc2626;} .btn-grey{background:#475569;}
-input,select,textarea{width:100%;padding:10px;margin:7px 0 12px;border:1px solid #ddd;border-radius:6px;box-sizing:border-box;}
-table{width:100%;border-collapse:collapse;} th,td{padding:10px;border-bottom:1px solid #eee;font-size:14px;text-align:left;} th{background:#f8fafc;}
-</style>
-"""
+def init_db():
+    conn=sqlite3.connect(DB); c=conn.cursor()
+    c.execute("CREATE TABLE IF NOT EXISTS students (id INTEGER PRIMARY KEY, name TEXT, roll TEXT UNIQUE, room TEXT, parent TEXT UNIQUE, photo TEXT, year TEXT, dept TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS wardens (id INTEGER PRIMARY KEY, name TEXT, year TEXT, mobile TEXT, username TEXT UNIQUE, password TEXT, status TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS gate_staff (id INTEGER PRIMARY KEY, name TEXT, mobile TEXT, username TEXT UNIQUE, password TEXT, status TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS outpass (id INTEGER PRIMARY KEY, roll TEXT, reason TEXT, from_date TEXT, to_date TEXT, status TEXT, photo TEXT, year TEXT, dept TEXT)")
+    conn.commit(); conn.close()
+init_db()
 
 @app.route('/')
 def home():
-    html = """
-    <html><head><title>Study World Hostel</title>""" + BASE + """</head><body>
-    <div class='header'><img src='/logo.png' class='logo'><h1>Study World Hostel</h1><p>Outpass Management System</p></div>
-    <div class='container'>
-        <div class='card' style='text-align:center;'>
-            <a href='/student/outpass' class='btn'>Student - Apply Outpass</a>
-            <a href='/student/status' class='btn btn-grey'>Check Status</a><br><br>
-            <a href='/login' class='btn btn-green'>Warden / Gate / Admin Login</a>
-            <a href='/register' class='btn'>Create New Account</a>
-            <a href='/forgot-password' class='btn btn-grey'>Forgot Password?</a>
-        </div>
-    </div></body></html>
-    """
-    return render_template_string(html)
+    if 'warden' in session: return redirect('/warden')
+    if 'gate' in session: return redirect('/gate')
+    if 'student' in session: return redirect('/student')
+    if 'admin' in session: return redirect('/admin')
+    return top("""
+    <h3 style='text-align:center;'>DASHBOARD</h3>
+    <a href='/student_login' style='text-decoration:none;'><div style='background:#0D47A1; color:#fff; padding:15px; border-radius:10px; text-align:center; margin-top:15px; font-weight:bold;'>🎓 Student</div></a>
+    <a href='/warden_login' style='text-decoration:none;'><div style='background:#1565C0; color:#fff; padding:15px; border-radius:10px; text-align:center; margin-top:10px; font-weight:bold;'>👨‍🏫 Warden</div></a>
+    <a href='/gate_login' style='text-decoration:none;'><div style='background:#2E7D32; color:#fff; padding:15px; border-radius:10px; text-align:center; margin-top:10px; font-weight:bold;'>🔐 Gate Security</div></a>
+    <a href='/admin_login' style='text-decoration:none;'><div style='background:#000; color:#fff; padding:15px; border-radius:10px; text-align:center; margin-top:10px; font-weight:bold;'>⚙️ Admin</div></a>
+    """)
 
-@app.route('/register', methods=['GET','POST'])
-def register():
-    if request.method == 'POST':
-        users = load_users()
-        uname = request.form['username'].strip()
-        for u in users:
-            if u['username'] == uname:
-                return "<h3 style='text-align:center;color:red;'>Username exists <a href='/register'>Try again</a></h3>"
-        new_user = {
-            'id': len(users)+1,
-            'username': uname,
-            'password': request.form['password'],
-            'role': request.form['role'],
-            'year': request.form.get('year','All'),
-            'mobile': request.form['mobile'],
-            'status': 'Active' if request.form['role'] != 'admin' else 'Pending'
-        }
-        users.append(new_user)
-        save_json(USERS_FILE, users)
-        return "<div style='text-align:center;padding:40px;font-family:Arial;'><h3 style='color:green;'>Account Created!</h3><a href='/login'>Login Now</a></div>"
-    return render_template_string("<html><head><title>Register</title>" + BASE + "</head><body><div class='header'><h2>Create Account</h2></div><div class='container'><div class='card' style='max-width:500px;margin:auto;'><form method='POST'><label>Username</label><input name='username' required><label>Mobile Number</label><input name='mobile' pattern='[0-9]{10}' required><label>Role</label><select name='role' required><option value='gate'>Gate Security</option><option value='admin'>Admin</option><option value='warden'>Warden</option></select><label>Year</label><select name='year'><option>1st Year</option><option>2nd Year</option><option>3rd Year</option><option>Final Year</option><option>All</option></select><label>Password</label><input type='password' name='password' required><button class='btn' style='width:100%;'>Create Account</button></form></div></div></body></html>")
+@app.route('/student_register', methods=['GET','POST'])
+def student_register():
+    if request.method=='POST':
+        name=request.form.get('name'); roll=request.form.get('roll'); room=request.form.get('room'); parent=request.form.get('parent'); year=request.form.get('year'); dept=request.form.get('dept')
+        conn=sqlite3.connect(DB); c=conn.cursor()
+        check=c.execute("SELECT * FROM students WHERE parent=? OR roll=?", (parent, roll)).fetchone()
+        if check:
+            conn.close()
+            return top(f"<h3 style='color:red;'>❌ Already Exists!</h3><p>Mobile {parent} / Roll {roll} already irukku! One Mobile=One Account!</p><a href='/student_login'><button style='width:100%; padding:12px; background:#0D47A1; color:#fff; border:none; border-radius:8px;'>Login Pannu</button></a>")
+        f=request.files.get('photo'); photo_name=""
+        if f and f.filename!="":
+            photo_name=secure_filename(roll+"_"+f.filename)
+            f.save(os.path.join(app.config['UPLOAD_FOLDER'], photo_name))
+        c.execute("INSERT INTO students (name,roll,room,parent,photo,year,dept) VALUES (?,?,?,?,?,?,?)",(name,roll,room,parent,photo_name,year,dept))
+        conn.commit(); conn.close()
+        session.permanent=True; session['student']=roll; return redirect('/student')
+    return top("""
+    <h3>Student Register (Year/Dept/Photo)</h3>
+    <form method='POST' enctype='multipart/form-data'>
+    <input name='name' placeholder='Full Name' style='width:100%; padding:12px; margin-top:8px; border-radius:8px; border:1px solid #ccc;' required>
+    <input name='roll' placeholder='Roll No' style='width:100%; padding:12px; margin-top:8px; border-radius:8px; border:1px solid #ccc;' required>
+    <input name='year' placeholder='Year Ex: 2nd Year' style='width:100%; padding:12px; margin-top:8px; border-radius:8px; border:2px solid #0D47A1;' required>
+    <input name='dept' placeholder='Department Ex: CSE' style='width:100%; padding:12px; margin-top:8px; border-radius:8px; border:2px solid #0D47A1;' required>
+    <input name='room' placeholder='Room No' style='width:100%; padding:12px; margin-top:8px; border-radius:8px; border:1px solid #ccc;' required>
+    <input name='parent' placeholder='Parent Mobile * One=One Account' style='width:100%; padding:12px; margin-top:8px; border-radius:8px; border:2px solid red;' required>
+    <label style='margin-top:10px; display:block; font-weight:bold;'>Photo *</label>
+    <input type='file' name='photo' accept='image/*' style='width:100%; padding:10px; margin-top:5px; border:1px solid #ccc; border-radius:8px;' required>
+    <button style='width:100%; padding:14px; background:#0D47A1; color:#fff; margin-top:15px; border:none; border-radius:10px; font-weight:bold;'>Register</button>
+    </form>
+    """)
 
-@app.route('/forgot-password', methods=['GET','POST'])
-def forgot_password():
-    if request.method == 'POST':
-        users = load_users()
-        uname = request.form['username']
-        mobile = request.form['mobile']
-        newpass = request.form['new_password']
-        found = None
-        for u in users:
-            if u['username'] == uname and u['mobile'] == mobile:
-                found = u
-                break
-        if not found:
-            return "<h3 style='text-align:center;color:red;'>Username and Mobile not matching <a href='/forgot-password'>Try again</a></h3>"
-        if found['role'] == 'warden':
-            resets = load_json(RESET_FILE)
-            resets.append({'id': len(resets)+1, 'username': uname, 'mobile': mobile, 'new_password': newpass, 'status': 'Pending', 'date': datetime.now().strftime("%Y-%m-%d %H:%M")})
-            save_json(RESET_FILE, resets)
-            return "<div style='text-align:center;padding:40px;font-family:Arial;'><h3 style='color:orange;'>Request sent to Admin for approval</h3><a href='/'>Home</a></div>"
-        else:
-            found['password'] = newpass
-            save_json(USERS_FILE, users)
-            return "<div style='text-align:center;padding:40px;font-family:Arial;'><h3 style='color:green;'>Password Changed</h3><a href='/login'>Login</a></div>"
-    return render_template_string("<html><head><title>Forgot</title>" + BASE + "</head><body><div class='header'><h2>Forgot Password - Via Mobile</h2></div><div class='container'><div class='card' style='max-width:500px;margin:auto;'><form method='POST'><label>Username</label><input name='username' required><label>Mobile</label><input name='mobile' required><label>New Password</label><input type='password' name='new_password' required><button class='btn' style='width:100%;'>Reset</button></form></div></div></body></html>")
+@app.route('/student_login', methods=['GET','POST'])
+def student_login():
+    if request.method=='POST':
+        roll=request.form.get('roll'); conn=sqlite3.connect(DB); c=conn.cursor()
+        r=c.execute("SELECT * FROM students WHERE roll=?", (roll,)).fetchone(); conn.close()
+        if r: session.permanent=True; session['student']=roll; return redirect('/student')
+    return top("<h3>Student Login</h3><form method='POST'><input name='roll' placeholder='Roll No' style='width:100%; padding:12px; border-radius:8px; border:1px solid #ccc;'><button style='width:100%; padding:12px; background:#0D47A1; color:#fff; margin-top:10px; border:none; border-radius:8px;'>Login</button></form><br><a href='/student_register'>New? Register (Year/Dept/Photo)</a>")
 
-@app.route('/login', methods=['GET','POST'])
-def login():
-    if request.method == 'POST':
-        users = load_users()
-        uname = request.form['username']
-        pwd = request.form['password']
-        for u in users:
-            if u['username'] == uname and u['password'] == pwd and u['status'] == 'Active':
-                session['user'] = u
-                if u['role'] == 'warden':
-                    return redirect('/warden/dashboard')
-                elif u['role'] == 'gate':
-                    return redirect('/gate/dashboard')
-                else:
-                    return redirect('/admin/dashboard')
-        return "<h3 style='text-align:center;color:red;'>Invalid login <a href='/login'>Try again</a></h3>"
-    return render_template_string("<html><head><title>Login</title>" + BASE + "</head><body><div class='header'><h2>Login</h2></div><div class='container'><div class='card' style='max-width:450px;margin:auto;'><form method='POST'><label>Username</label><input name='username' required><label>Password</label><input type='password' name='password' required><button class='btn' style='width:100%;'>Login</button></form><br><a href='/forgot-password'>Forgot Password?</a></div></div></body></html>")
+@app.route('/student', methods=['GET','POST'])
+def student():
+    if 'student' not in session: return redirect('/')
+    conn=sqlite3.connect(DB); c=conn.cursor()
+    stu=c.execute("SELECT * FROM students WHERE roll=?", (session['student'],)).fetchone()
+    if request.method=='POST':
+        reason=request.form.get('reason'); from_d=request.form.get('from_date'); to_d=request.form.get('to_date')
+        s_year=stu[6] if stu and len(stu)>6 else ''; s_dept=stu[7] if stu and len(stu)>7 else ''
+        c.execute("INSERT INTO outpass (roll,reason,from_date,to_date,status,photo,year,dept) VALUES (?,?,?,?,?,?,?,?)",(session['student'],reason,from_d,to_d,'Pending',stu[5] if stu else '', s_year, s_dept))
+        conn.commit()
+    rows=c.execute("SELECT * FROM outpass WHERE roll=?", (session['student'],)).fetchall(); conn.close()
+    img=f"<center><img src='/static/uploads/{stu[5]}' style='width:100px; height:100px; object-fit:cover; border-radius:50%; border:3px solid #0D47A1;'></center>" if stu and stu[5] else ""
+    y_d=f"<center><b>{stu[6]} - {stu[7]}</b> | Room: {stu[3]}</center>" if stu and len(stu)>7 else ""
+    t="".join([f"<tr><td>{r[2]}</td><td>{r[3]}<br>to<br>{r[4]}</td><td>{r[5]}</td></tr>" for r in rows])
+    return top(f"<h3>Student: {session['student']}</h3>{img}{y_d}<form method='POST' style='margin-top:15px;'><label style='font-weight:bold;'>Reason</label><input name='reason' placeholder='Ex: Going Home' style='width:100%; padding:12px; margin-top:5px; border-radius:8px; border:1px solid #ccc;' required><label style='margin-top:12px; display:block; font-weight:bold;'>FROM Date</label><input name='from_date' type='date' style='width:100%; padding:12px; margin-top:5px; border-radius:8px;' required><label style='margin-top:12px; display:block; font-weight:bold;'>TO Date</label><input name='to_date' type='date' style='width:100%; padding:12px; margin-top:5px; border-radius:8px;' required><button style='width:100%; padding:14px; background:#0D47A1; color:#fff; margin-top:15px; border:none; border-radius:10px; font-weight:bold;'>Apply Outpass (From-To)</button></form><h4>My Requests</h4><table border=1 style='width:100%; border-collapse:collapse;'><tr style='background:#e3f2fd;'><th>Reason</th><th>From-To</th><th>Status</th></tr>{t}</table><br><a href='/logout'>Logout</a>")
 
-@app.route('/student/outpass', methods=['GET','POST'])
-def student_outpass():
-    if request.method == 'POST':
-        data = load_json(OUTPASS_FILE)
-        new_entry = {
-            'id': len(data)+1,
-            'name': request.form['name'],
-            'roll_no': request.form['roll_no'],
-            'phone': request.form['phone'],
-            'year': request.form['year'],
-            'reason': request.form['reason'],
-            'from_date': request.form['from_date'],
-            'to_date': request.form['to_date'],
-            'status': 'Pending',
-            'gate_status': 'Not Allowed',
-            'returned': 'No',
-            'created_at': datetime.now().strftime("%Y-%m-%d %H:%M")
-        }
-        data.append(new_entry)
-        save_json(OUTPASS_FILE, data)
-        return "<div style='text-align:center;padding:40px;font-family:Arial;'><h2>Outpass Submitted</h2><p>ID: " + str(new_entry['id']) + "</p><a href='/student/status'>Check Status</a></div>"
-    return render_template_string("<html><head><title>Outpass</title>" + BASE + "</head><body><div class='header'><img src='/logo.png' class='logo'><h2>Student Outpass</h2></div><div class='container'><div class='card' style='max-width:600px;margin:auto;'><form method='POST'><label>Name</label><input name='name' required><label>Roll No</label><input name='roll_no' required><label>Phone</label><input name='phone' required><label>Year</label><select name='year' required><option>1st Year</option><option>2nd Year</option><option>3rd Year</option><option>Final Year</option></select><label>From</label><input type='date' name='from_date' required><label>To</label><input type='date' name='to_date' required><label>Reason</label><textarea name='reason' required></textarea><button class='btn' style='width:100%;'>Submit</button></form></div></div></body></html>")
+@app.route('/warden_register', methods=['GET','POST'])
+def warden_register():
+    if request.method=='POST':
+        name=request.form.get('name'); year=request.form.get('year'); mobile=request.form.get('mobile'); user=request.form.get('username'); pwd=request.form.get('password')
+        conn=sqlite3.connect(DB); c=conn.cursor()
+        try: c.execute("INSERT INTO wardens (name,year,mobile,username,password,status) VALUES (?,?,?,?,?,?)",(name,year,mobile,user,pwd,'WAITING')); conn.commit()
+        except: return top("<h3 style='color:red;'>Username Exists!</h3><a href='/warden_register'>Back</a>")
+        conn.close(); return top("<h3 style='color:orange;'>Waiting for Admin Approval! ✅</h3><a href='/'><button style='width:100%; padding:12px; background:#000; color:#fff; border:none; border-radius:8px;'>Go Dashboard</button></a>")
+    return top("<h3>Warden Register</h3><form method='POST'><input name='name' placeholder='Full Name' style='width:100%; padding:12px; margin-top:8px; border-radius:8px; border:1px solid #ccc;' required><input name='year' placeholder='Which Year Warden? Ex: 2nd Year' style='width:100%; padding:12px; margin-top:8px; border-radius:8px; border:1px solid #ccc;' required><input name='mobile' placeholder='Mobile' style='width:100%; padding:12px; margin-top:8px; border-radius:8px; border:1px solid #ccc;' required><input name='username' placeholder='Create Username' style='width:100%; padding:12px; margin-top:8px; border-radius:8px; border:1px solid #ccc;' required><input name='password' type='password' placeholder='Create Password' style='width:100%; padding:12px; margin-top:8px; border-radius:8px; border:1px solid #ccc;' required><button style='width:100%; padding:14px; background:#1565C0; color:#fff; margin-top:10px; border:none; border-radius:10px;'>Submit to Admin</button></form>")
 
-@app.route('/student/status', methods=['GET','POST'])
-def student_status():
-    result = ""
-    if request.method == 'POST':
-        search = request.form['search'].lower()
-        data = load_json(OUTPASS_FILE)
-        filtered = []
-        for r in data:
-            if search in r['phone'].lower() or search in r['roll_no'].lower():
-                filtered.append(r)
-        rows = ""
-        for r in reversed(filtered):
-            rows += "<tr><td>" + str(r['id']) + "</td><td>" + r['from_date'] + " to " + r['to_date'] + "</td><td>" + r['status'] + "</td><td>" + r['gate_status'] + "</td><td>" + r['returned'] + "</td></tr>"
-        if rows == "":
-            rows = "<tr><td colspan='5'>No records</td></tr>"
-        result = "<div class='card'><table><tr><th>ID</th><th>Date</th><th>Warden</th><th>Gate</th><th>Returned</th></tr>" + rows + "</table></div>"
-    return render_template_string("<html><head><title>Status</title>" + BASE + "</head><body><div class='header'><h2>Check Status</h2></div><div class='container'><div class='card' style='max-width:600px;margin:auto;'><form method='POST'><input name='search' placeholder='Phone or Roll No' required><button class='btn' style='width:100%;'>Search</button></form></div>" + result + "<div style='text-align:center;'><a href='/' class='btn btn-grey'>Home</a></div></div></body></html>")
+@app.route('/warden_login', methods=['GET','POST'])
+def warden_login():
+    if request.method=='POST':
+        u=request.form.get('username'); p=request.form.get('password'); conn=sqlite3.connect(DB); c=conn.cursor()
+        r=c.execute("SELECT * FROM wardens WHERE username=? AND password=? AND status='APPROVED'",(u,p)).fetchone(); conn.close()
+        if r: session.permanent=True; session['warden']=r[0]; return redirect('/warden')
+        else: return top("<p style='color:red;'>❌ Not Approved or Wrong Password!</p><a href='/warden_login'>Back</a>")
+    return top("<h3>Warden Login</h3><form method='POST'><input name='username' placeholder='Username' style='width:100%; padding:12px; border-radius:8px; border:1px solid #ccc;'><input name='password' type='password' placeholder='Password' style='width:100%; padding:12px; margin-top:10px; border-radius:8px; border:1px solid #ccc;'><button style='width:100%; padding:12px; background:#1565C0; color:#fff; margin-top:10px; border:none; border-radius:8px;'>Login</button></form><br><a href='/warden_register'>New? Register</a><br><a href='/warden_forgot' style='color:red; font-weight:bold;'>Forgot Password? OTP</a>")
 
-@app.route('/warden/dashboard')
-def warden_dashboard():
-    if 'user' not in session or session['user']['role'] != 'warden':
-        return redirect('/login')
-    w = session['user']
-    data = load_json(OUTPASS_FILE)
-    filtered = []
-    for r in data:
-        if r['year'] == w['year']:
-            filtered.append(r)
-    rows = ""
-    for r in reversed(filtered):
-        if r['status'] == 'Pending':
-            action = "<a href='/warden/approve/" + str(r['id']) + "' class='btn btn-green' style='padding:4px 8px;font-size:12px'>Approve</a> <a href='/warden/reject/" + str(r['id']) + "' class='btn btn-red' style='padding:4px 8px;font-size:12px'>Reject</a>"
-        else:
-            action = r['status']
-        rows += "<tr><td>" + str(r['id']) + "</td><td>" + r['name'] + "<br><small>" + r['roll_no'] + "</small></td><td>" + r['phone'] + "</td><td>" + r['from_date'] + " to " + r['to_date'] + "</td><td>" + r['reason'] + "</td><td>" + r['status'] + "</td><td>" + action + "</td></tr>"
-    if rows == "":
-        rows = "<tr><td colspan='7'>No requests for " + w['year'] + "</td></tr>"
-    html = "<html><head>" + BASE + "</head><body><div class='header' style='background:#16a34a;'><h2>" + w['year'] + " Warden - " + w['username'] + "</h2><a href='/logout' style='color:white;'>Logout</a></div><div class='container'><div class='card'><h3>Requests (" + str(len(filtered)) + ")</h3><table><tr><th>ID</th><th>Student</th><th>Phone</th><th>Date</th><th>Reason</th><th>Status</th><th>Action</th></tr>" + rows + "</table></div></div></body></html>"
-    return render_template_string(html)
+@app.route('/warden')
+def warden():
+    if 'warden' not in session: return redirect('/')
+    conn=sqlite3.connect(DB); c=conn.cursor()
+    rows=c.execute("SELECT outpass.*, students.photo FROM outpass JOIN students ON outpass.roll=students.roll WHERE outpass.status='Pending'").fetchall(); conn.close()
+    t="".join([f"<tr><td>{r[1]}<br><small style='background:#0D47A1; color:#fff; padding:2px 6px; border-radius:5px;'>{r[7]}-{r[8]}</small><br><img src='/static/uploads/{r[6]}' width='50' style='border-radius:50%; margin-top:5px;'></td><td>{r[2]}<br><b style='color:#0D47A1;'>{r[3]} to {r[4]}</b></td><td><a href='/approve/{r[0]}'><button style='background:green; color:#fff; padding:8px; border:none; border-radius:5px;'>Approve</button></a></td></tr>" for r in rows])
+    return top(f"<h3>Warden Dashboard</h3><table border=1 style='width:100%; border-collapse:collapse;'><tr style='background:#e3f2fd;'><th>Student (Year-Dept)</th><th>Reason & From-To</th><th>Action</th></tr>{t}</table><br><a href='/logout'><button style='width:100%; padding:10px; background:#ccc; border:none; border-radius:8px;'>Logout</button></a>")
 
-@app.route('/warden/approve/<int:id>')
-def warden_approve(id):
-    if 'user' not in session:
-        return redirect('/login')
-    data = load_json(OUTPASS_FILE)
-    for r in data:
-        if r['id'] == id:
-            r['status'] = 'Approved'
-            r['gate_status'] = 'Allowed'
-    save_json(OUTPASS_FILE, data)
-    return redirect('/warden/dashboard')
+@app.route('/approve/<id>')
+def approve(id):
+    conn=sqlite3.connect(DB); c=conn.cursor(); c.execute("UPDATE outpass SET status='Approved' WHERE id=?",(id,)); conn.commit(); conn.close(); return redirect('/warden')
 
-@app.route('/warden/reject/<int:id>')
-def warden_reject(id):
-    if 'user' not in session:
-        return redirect('/login')
-    data = load_json(OUTPASS_FILE)
-    for r in data:
-        if r['id'] == id:
-            r['status'] = 'Rejected'
-            r['gate_status'] = 'Not Allowed'
-    save_json(OUTPASS_FILE, data)
-    return redirect('/warden/dashboard')
+@app.route('/warden_forgot', methods=['GET','POST'])
+def warden_forgot():
+    if request.method=='POST':
+        user=request.form.get('username'); mobile=request.form.get('mobile')
+        conn=sqlite3.connect(DB); c=conn.cursor(); r=c.execute("SELECT * FROM wardens WHERE username=? AND mobile=?", (user,mobile)).fetchone(); conn.close()
+        if r: otp=str(random.randint(1000,9999)); session['warden_otp']=otp; session['warden_reset_user']=user; return redirect('/warden_verify_otp')
+        return top("<h3 style='color:red;'>Not Match!</h3><a href='/warden_forgot'>Try Again</a>")
+    return top("<h3>Warden Forgot - OTP</h3><form method='POST'><input name='username' placeholder='Username' style='width:100%; padding:12px;' required><input name='mobile' placeholder='Registered Mobile' style='width:100%; padding:12px; margin-top:8px;' required><button style='width:100%; padding:12px; background:#1565C0; color:#fff; margin-top:10px;'>Send OTP</button></form>")
 
-@app.route('/gate/dashboard')
-def gate_dashboard():
-    if 'user' not in session or session['user']['role'] != 'gate':
-        return redirect('/login')
-    data = load_json(OUTPASS_FILE)
-    approved = []
-    for r in data:
-        if r['status'] == 'Approved':
-            approved.append(r)
-    rows = ""
-    for r in reversed(approved):
-        if r['returned'] == 'No':
-            action = "<a href='/gate/returned/" + str(r['id']) + "' class='btn btn-green' style='padding:4px 8px'>Mark Returned</a>"
-        else:
-            action = "Returned"
-        rows += "<tr><td>" + str(r['id']) + "</td><td>" + r['name'] + " (" + r['roll_no'] + ") " + r['year'] + "</td><td>" + r['phone'] + "</td><td>" + r['from_date'] + " to " + r['to_date'] + "</td><td>" + r['returned'] + "</td><td>" + action + "</td></tr>"
-    if rows == "":
-        rows = "<tr><td colspan='6'>No approved</td></tr>"
-    html = "<html><head>" + BASE + "</head><body><div class='header' style='background:#7c3aed;'><h2>Gate Security - Returned View</h2><a href='/logout' style='color:white;'>Logout</a></div><div class='container'><div class='card'><h3>Approved Students</h3><table><tr><th>ID</th><th>Student</th><th>Phone</th><th>Date</th><th>Returned</th><th>Action</th></tr>" + rows + "</table></div></div></body></html>"
-    return render_template_string(html)
+@app.route('/warden_verify_otp', methods=['GET','POST'])
+def warden_verify_otp():
+    if 'warden_otp' not in session: return redirect('/warden_forgot')
+    if request.method=='POST':
+        if request.form.get('otp')==session.get('warden_otp'):
+            user=session.get('warden_reset_user'); conn=sqlite3.connect(DB); c=conn.cursor()
+            c.execute("UPDATE wardens SET password=? WHERE username=?", (request.form.get('new_password'), user)); conn.commit(); conn.close()
+            session.pop('warden_otp', None); session.pop('warden_reset_user', None)
+            return top("<h3 style='color:green;'>✅ Reset Success!</h3><a href='/warden_login'><button style='width:100%; padding:12px; background:#1565C0; color:#fff;'>Login Now</button></a>")
+        else: return top(f"<h3 style='color:red;'>Wrong OTP! Correct: {session.get('warden_otp')}</h3><a href='/warden_verify_otp'>Try Again</a>")
+    return top(f"<h3>Verify OTP - Warden</h3><p style='background:yellow; padding:10px; text-align:center; border-radius:8px;'><b>DEMO OTP: {session.get('warden_otp')}</b></p><form method='POST'><input name='otp' placeholder='Enter OTP' style='width:100%; padding:12px;' required><input name='new_password' type='password' placeholder='New Password' style='width:100%; padding:12px; margin-top:8px;' required><button style='width:100%; padding:12px; background:green; color:#fff; margin-top:10px;'>Verify & Reset</button></form>")
 
-@app.route('/gate/returned/<int:id>')
-def gate_returned(id):
-    if 'user' not in session:
-        return redirect('/login')
-    data = load_json(OUTPASS_FILE)
-    for r in data:
-        if r['id'] == id:
-            r['returned'] = "Yes - " + datetime.now().strftime("%Y-%m-%d %H:%M")
-    save_json(OUTPASS_FILE, data)
-    return redirect('/gate/dashboard')
+@app.route('/gate_register', methods=['GET','POST'])
+def gate_register():
+    if request.method=='POST':
+        name=request.form.get('name'); mobile=request.form.get('mobile'); user=request.form.get('username'); pwd=request.form.get('password')
+        conn=sqlite3.connect(DB); c=conn.cursor()
+        try: c.execute("INSERT INTO gate_staff (name,mobile,username,password,status) VALUES (?,?,?,?,?)",(name,mobile,user,pwd,'WAITING')); conn.commit()
+        except: return top("<h3 style='color:red;'>Username Exists!</h3><a href='/gate_register'>Back</a>")
+        conn.close(); return top("<h3 style='color:orange;'>Gate Waiting for Admin!</h3><a href='/'><button style='width:100%; padding:12px; background:#000; color:#fff; border:none; border-radius:8px;'>Dashboard</button></a>")
+    return top("<h3>Gate Security Register</h3><form method='POST'><input name='name' placeholder='Full Name' style='width:100%; padding:12px; margin-top:8px; border-radius:8px; border:1px solid #ccc;' required><input name='mobile' placeholder='Mobile' style='width:100%; padding:12px; margin-top:8px; border-radius:8px; border:1px solid #ccc;' required><input name='username' placeholder='Create Username' style='width:100%; padding:12px; margin-top:8px; border-radius:8px; border:1px solid #ccc;' required><input name='password' type='password' placeholder='Create Password' style='width:100%; padding:12px; margin-top:8px; border-radius:8px; border:1px solid #ccc;' required><button style='width:100%; padding:14px; background:#2E7D32; color:#fff; margin-top:10px; border:none; border-radius:10px;'>Submit to Admin</button></form>")
 
-@app.route('/admin/dashboard')
-def admin_dashboard():
-    if 'user' not in session or session['user']['role'] != 'admin':
-        return redirect('/login')
-    users = load_users()
-    outpass = load_json(OUTPASS_FILE)
-    resets = load_json(RESET_FILE)
-    user_rows = ""
-    for u in users:
-        user_rows += "<tr><td>" + str(u['id']) + "</td><td>" + u['username'] + "</td><td>" + u['role'] + "</td><td>" + u['year'] + "</td><td>" + u['mobile'] + "</td><td>" + u['status'] + "</td></tr>"
-    out_rows = ""
-    for r in reversed(outpass[-20:]):
-        out_rows += "<tr><td>" + str(r['id']) + "</td><td>" + r['name'] + " " + r['year'] + "</td><td>" + r['status'] + "</td><td>" + r['gate_status'] + "</td><td>" + r['returned'] + "</td></tr>"
-    reset_rows = ""
-    for r in resets:
-        if r['status'] == 'Pending':
-            reset_rows += "<tr><td>" + str(r['id']) + "</td><td>" + r['username'] + "</td><td>" + r['mobile'] + "</td><td>" + r['status'] + "</td><td><a href='/admin/approve-reset/" + str(r['id']) + "' class='btn btn-green' style='padding:4px 8px;'>Approve</a></td></tr>"
-    if reset_rows == "":
-        reset_rows = "<tr><td colspan='5'>No pending requests</td></tr>"
-    html = "<html><head>" + BASE + "</head><body><div class='header'><h2>Admin Dashboard</h2><a href='/logout' style='color:white;'>Logout</a></div><div class='container'><div class='card'><h3>Password Reset Requests - Admin Permission</h3><table><tr><th>ID</th><th>Username</th><th>Mobile</th><th>Status</th><th>Action</th></tr>" + reset_rows + "</table></div><div class='card'><h3>All Users - Passwords Hidden Secure</h3><table><tr><th>ID</th><th>Username</th><th>Role</th><th>Year</th><th>Mobile</th><th>Status</th></tr>" + user_rows + "</table></div><div class='card'><h3>Recent Outpass</h3><table><tr><th>ID</th><th>Student</th><th>Warden</th><th>Gate</th><th>Returned</th></tr>" + out_rows + "</table></div></div></body></html>"
-    return render_template_string(html)
+@app.route('/gate_login', methods=['GET','POST'])
+def gate_login():
+    if request.method=='POST':
+        u=request.form.get('username'); p=request.form.get('password'); conn=sqlite3.connect(DB); c=conn.cursor()
+        r=c.execute("SELECT * FROM gate_staff WHERE username=? AND password=? AND status='APPROVED'",(u,p)).fetchone(); conn.close()
+        if r: session.permanent=True; session['gate']=r[0]; return redirect('/gate')
+        else: return top("<p style='color:red;'>❌ Not Approved or Wrong Password!</p><a href='/gate_login'>Back</a>")
+    return top("<h3>Gate Security Login</h3><form method='POST'><input name='username' placeholder='Username' style='width:100%; padding:12px; border-radius:8px; border:1px solid #ccc;'><input name='password' type='password' placeholder='Password' style='width:100%; padding:12px; margin-top:10px; border-radius:8px; border:1px solid #ccc;'><button style='width:100%; padding:12px; background:#2E7D32; color:#fff; margin-top:10px; border:none; border-radius:8px;'>Login</button></form><br><a href='/gate_register'>New? Register</a><br><a href='/gate_forgot' style='color:red; font-weight:bold;'>Forgot Password? OTP</a>")
 
-@app.route('/admin/approve-reset/<int:id>')
-def admin_approve_reset(id):
-    if 'user' not in session or session['user']['role'] != 'admin':
-        return redirect('/login')
-    resets = load_json(RESET_FILE)
-    users = load_users()
-    for r in resets:
-        if r['id'] == id and r['status'] == 'Pending':
-            r['status'] = 'Approved'
-            for u in users:
-                if u['username'] == r['username'] and u['mobile'] == r['mobile']:
-                    u['password'] = r['new_password']
-    save_json(RESET_FILE, resets)
-    save_json(USERS_FILE, users)
-    return redirect('/admin/dashboard')
+@app.route('/gate')
+def gate():
+    if 'gate' not in session: return redirect('/')
+    conn=sqlite3.connect(DB); c=conn.cursor()
+    rows=c.execute("SELECT * FROM outpass WHERE status='Approved'").fetchall()
+    t="".join([f"<tr><td>{r[1]}<br><small>{r[7]}-{r[8]}</small></td><td>{r[2]}<br><b>{r[3]} to {r[4]}</b></td><td><a href='/allow/{r[0]}'><button style='background:green; color:#fff; padding:8px; border:none; border-radius:5px;'>ALLOW</button></a></td></tr>" for r in rows])
+    rows2=c.execute("SELECT * FROM outpass WHERE status='Outside'").fetchall()
+    t2="".join([f"<tr><td>{r[1]}<br><small>{r[7]}-{r[8]}</small></td><td>{r[2]}</td><td><a href='/returned/{r[0]}'><button>RETURNED</button></a></td></tr>" for r in rows2]); conn.close()
+    return top(f"<h3>Gate - Year/Dept/From-To</h3><table border=1 style='width:100%; border-collapse:collapse;'><tr style='background:#c8e6c9;'><th>Roll (Year-Dept)</th><th>Reason & From-To</th><th>Action</th></tr>{t}</table><h3 style='margin-top:20px;'>Outside</h3><table border=1 style='width:100%; border-collapse:collapse;'><tr style='background:#ffccbc;'><th>Roll</th><th>Details</th><th>Action</th></tr>{t2}</table><br><a href='/logout'><button style='width:100%; padding:10px; background:#ccc; border:none; border-radius:8px;'>Logout</button></a>")
+
+@app.route('/allow/<id>')
+def allow(id):
+    conn=sqlite3.connect(DB); c=conn.cursor(); c.execute("UPDATE outpass SET status='Outside' WHERE id=?",(id,)); conn.commit(); conn.close(); return redirect('/gate')
+@app.route('/returned/<id>')
+def returned(id):
+    conn=sqlite3.connect(DB); c=conn.cursor(); c.execute("UPDATE outpass SET status='Returned' WHERE id=?",(id,)); conn.commit(); conn.close(); return redirect('/gate')
+
+@app.route('/gate_forgot', methods=['GET','POST'])
+def gate_forgot():
+    if request.method=='POST':
+        user=request.form.get('username'); mobile=request.form.get('mobile')
+        conn=sqlite3.connect(DB); c=conn.cursor(); r=c.execute("SELECT * FROM gate_staff WHERE username=? AND mobile=?", (user,mobile)).fetchone(); conn.close()
+        if r: otp=str(random.randint(1000,9999)); session['gate_otp']=otp; session['gate_reset_user']=user; return redirect('/gate_verify_otp')
+        return top("<h3 style='color:red;'>Not Match!</h3><a href='/gate_forgot'>Try Again</a>")
+    return top("<h3>Gate Forgot - OTP</h3><form method='POST'><input name='username' placeholder='Username' style='width:100%; padding:12px;' required><input name='mobile' placeholder='Registered Mobile' style='width:100%; padding:12px; margin-top:8px;' required><button style='width:100%; padding:12px; background:#2E7D32; color:#fff; margin-top:10px;'>Send OTP</button></form>")
+
+@app.route('/gate_verify_otp', methods=['GET','POST'])
+def gate_verify_otp():
+    if 'gate_otp' not in session: return redirect('/gate_forgot')
+    if request.method=='POST':
+        if request.form.get('otp')==session.get('gate_otp'):
+            user=session.get('gate_reset_user'); conn=sqlite3.connect(DB); c=conn.cursor()
+            c.execute("UPDATE gate_staff SET password=? WHERE username=?", (request.form.get('new_password'), user)); conn.commit(); conn.close()
+            session.pop('gate_otp', None); session.pop('gate_reset_user', None)
+            return top("<h3 style='color:green;'>✅ Gate Reset Success!</h3><a href='/gate_login'><button style='width:100%; padding:12px; background:#2E7D32; color:#fff;'>Login Now</button></a>")
+        else: return top(f"<h3 style='color:red;'>Wrong OTP! Correct: {session.get('gate_otp')}</h3><a href='/gate_verify_otp'>Try Again</a>")
+    return top(f"<h3>Verify OTP - Gate</h3><p style='background:yellow; padding:10px; text-align:center; border-radius:8px;'><b>DEMO OTP: {session.get('gate_otp')}</b></p><form method='POST'><input name='otp' placeholder='Enter OTP' style='width:100%; padding:12px;' required><input name='new_password' type='password' placeholder='New Password' style='width:100%; padding:12px; margin-top:8px;' required><button style='width:100%; padding:12px; background:green; color:#fff; margin-top:10px;'>Verify & Reset</button></form>")
+
+@app.route('/admin_login', methods=['GET','POST'])
+def admin_login():
+    if request.method=='POST':
+        if request.form.get('username')=='admin' and request.form.get('password')=='admin123':
+            session.permanent=True; session['admin']=True; return redirect('/admin')
+    return top("<h3>Admin Login</h3><form method='POST'><input name='username' placeholder='admin' style='width:100%; padding:12px;'><input name='password' type='password' placeholder='admin123' style='width:100%; padding:12px; margin-top:10px;'><button style='width:100%; padding:12px; background:#000; color:#fff; margin-top:10px;'>Login</button></form>")
+
+@app.route('/admin')
+def admin():
+    if 'admin' not in session: return redirect('/')
+    conn=sqlite3.connect(DB); c=conn.cursor()
+    wardens=c.execute("SELECT * FROM wardens WHERE status='WAITING'").fetchall()
+    gates=c.execute("SELECT * FROM gate_staff WHERE status='WAITING'").fetchall(); conn.close()
+    w="".join([f"<tr><td>{r[1]} - {r[2]} Year<br><small>{r[3]}</small></td><td>{r[4]}</td><td><a href='/admin_approve_warden/{r[0]}'><button style='background:green; color:#fff; padding:8px; border:none; border-radius:5px;'>Approve</button></a></td></tr>" for r in wardens])
+    g="".join([f"<tr><td>{r[1]}<br><small>{r[2]}</small></td><td>{r[3]}</td><td><a href='/admin_approve_gate/{r[0]}'><button style='background:green; color:#fff; padding:8px; border:none; border-radius:5px;'>Approve</button></a></td></tr>" for r in gates])
+    return top(f"<h3>Admin - Approvals</h3><h4>Warden Waiting ({len(wardens)})</h4><table border=1 style='width:100%; border-collapse:collapse;'><tr><th>Name-Year</th><th>User</th><th>Action</th></tr>{w}</table><h4 style='margin-top:20px;'>Gate Waiting ({len(gates)})</h4><table border=1 style='width:100%; border-collapse:collapse;'><tr><th>Name</th><th>User</th><th>Action</th></tr>{g}</table><br><a href='/logout'><button style='width:100%; padding:10px; background:#ccc; border:none; border-radius:8px;'>Logout</button></a>")
+
+@app.route('/admin_approve_warden/<id>')
+def admin_approve_warden(id):
+    conn=sqlite3.connect(DB); c=conn.cursor(); c.execute("UPDATE wardens SET status='APPROVED' WHERE id=?",(id,)); conn.commit(); conn.close(); return redirect('/admin')
+@app.route('/admin_approve_gate/<id>')
+def admin_approve_gate(id):
+    conn=sqlite3.connect(DB); c=conn.cursor(); c.execute("UPDATE gate_staff SET status='APPROVED' WHERE id=?",(id,)); conn.commit(); conn.close(); return redirect('/admin')
 
 @app.route('/logout')
-def logout():
-    session.clear()
-    return redirect('/')
+def logout(): session.clear(); return redirect('/')
 
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+if __name__ == '__main__': app.run(debug=True, host='0.0.0.0', port=5000)
